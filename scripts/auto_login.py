@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ClawCloud 自动登录脚本
-- 等待设备验证批准（30秒）
+- 等待设备验证批准（60秒）
 - 每次登录后自动更新 Cookie
 - Telegram 通知
 """
@@ -16,7 +16,7 @@ from playwright.sync_api import sync_playwright
 # ==================== 配置 ====================
 CLAW_CLOUD_URL = "https://eu-central-1.run.claw.cloud"
 SIGNIN_URL = f"{CLAW_CLOUD_URL}/signin"
-DEVICE_VERIFY_WAIT = 30
+DEVICE_VERIFY_WAIT = 60
 
 
 class Telegram:
