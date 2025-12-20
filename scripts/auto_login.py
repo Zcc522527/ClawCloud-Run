@@ -2,6 +2,7 @@
 """
 ClawCloud 自动登录脚本
 - 等待设备验证批准（60秒）
+- 等待二次验证（60秒）
 - 每次登录后自动更新 Cookie
 - Telegram 通知
 """
@@ -17,6 +18,7 @@ from playwright.sync_api import sync_playwright
 CLAW_CLOUD_URL = "https://eu-central-1.run.claw.cloud"
 SIGNIN_URL = f"{CLAW_CLOUD_URL}/signin"
 DEVICE_VERIFY_WAIT = 60
+TWO_FACTOR_WAIT = 60  # 新增：2FA 等待时间
 
 
 class Telegram:
@@ -208,6 +210,46 @@ class AutoLogin:
         self.tg.send("❌ <b>设备验证超时</b>")
         return False
     
+    def wait_2fa(self, page):
+        """等待二次验证 - 新增方法"""
+        self.log(f"需要二次验证，等待 {TWO_FACTOR_WAIT} 秒...", "WARN")
+        self.shot(page, "二次验证")
+        
+        self.tg.send(f"""⚠️ <b>需要二次验证（2FA）</b>
+
+请在 {TWO_FACTOR_WAIT} 秒内完成：
+1️⃣ 打开验证器 App 获取验证码
+2️⃣ 或使用备用验证方式
+3️⃣ 输入验证码并提交""")
+        
+        if self.shots:
+            self.tg.photo(self.shots[-1], "二次验证页面")
+        
+        for i in range(TWO_FACTOR_WAIT):
+            time.sleep(1)
+            if i % 5 == 0:
+                self.log(f"  等待 2FA... ({i}/{TWO_FACTOR_WAIT}秒)")
+                url = page.url
+                # 检查是否已经离开 2FA 页面
+                if 'two-factor' not in url and 'sessions/two-factor' not in url:
+                    self.log("二次验证完成！", "SUCCESS")
+                    self.tg.send("✅ <b>二次验证通过</b>")
+                    return True
+                try:
+                    # 尝试检查页面状态
+                    page.wait_for_load_state('domcontentloaded', timeout=3000)
+                except:
+                    pass
+        
+        # 超时检查
+        if 'two-factor' not in page.url and 'sessions/two-factor' not in page.url:
+            self.log("二次验证完成！", "SUCCESS")
+            return True
+        
+        self.log("二次验证超时", "ERROR")
+        self.tg.send("❌ <b>二次验证超时</b>\n\n请手动完成验证或禁用 2FA")
+        return False
+    
     def login_github(self, page, context):
         """登录 GitHub"""
         self.log("登录 GitHub...", "STEP")
@@ -242,14 +284,20 @@ class AutoLogin:
             time.sleep(2)
             page.wait_for_load_state('networkidle', timeout=30000)
             self.shot(page, "验证后")
+            url = page.url  # 更新 URL
         
-        # 2FA
-        if 'two-factor' in page.url:
-            self.log("需要两步验证！", "ERROR")
-            self.tg.send("❌ <b>需要两步验证</b>")
-            return False
+        # 2FA - 修改为等待而不是直接失败
+        if 'two-factor' in url or 'sessions/two-factor' in url:
+            self.log("检测到二次验证", "WARN")
+            if not self.wait_2fa(page):
+                self.log("二次验证失败", "ERROR")
+                return False
+            time.sleep(2)
+            page.wait_for_load_state('networkidle', timeout=30000)
+            self.shot(page, "2FA验证后")
+            url = page.url  # 更新 URL
         
-        # 错误
+        # 错误检查
         try:
             err = page.locator('.flash-error').first
             if err.is_visible(timeout=2000):
