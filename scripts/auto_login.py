@@ -132,7 +132,13 @@ class AutoLogin:
         self.username = os.environ.get('GH_USERNAME')
         self.password = os.environ.get('GH_PASSWORD')
         self.gh_session = os.environ.get('GH_SESSION', '').strip()
-        self.totp_secret = os.environ.get('GITHUB_2FA_SECRET', '').strip()
+        # 支持多个可能的 2FA 密钥环境变量名
+        self.totp_secret = (
+    os.environ.get('GH_2FA_SECRET', '') or 
+    os.environ.get('TOTP_SECRET', '') or 
+    os.environ.get('GITHUB_2FA_SECRET', '')
+    ).strip()
+
         self.tg = Telegram()
         self.secret = SecretUpdater()
         self.shots = []
