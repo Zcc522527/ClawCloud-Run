@@ -1,59 +1,68 @@
-name: Auto Login ClawCloud
+name: ClawCloud Auto Login
 
 on:
   schedule:
-    # 每天 UTC 0:00 运行（北京时间 8:00）
-    - cron: '0 0 * * *'
-    # 每天 UTC 12:00 运行（北京时间 20:00）
-    - cron: '0 12 * * *'
+    # 每天 UTC 0:00 和 12:00 运行（北京时间 8:00 和 20:00）
+    - cron: '0 0,12 * * *'
   
-  # 手动触发
-  workflow_dispatch:
+  workflow_dispatch:  # 支持手动触发
     inputs:
-      wait_2fa:
-        description: '2FA 等待时间（秒）'
+      debug:
+        description: '启用调试模式'
         required: false
-        default: '60'
+        default: 'false'
+
+env:
+  # 等待时间配置（可选）
+  DEVICE_VERIFY_WAIT: 60
+  TWO_FACTOR_WAIT: 60
+  REDIRECT_WAIT: 90
 
 jobs:
   login:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
       
-      - name: Setup Python
+      - name: 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
       
-      - name: Install Dependencies
+      - name: 安装依赖
         run: |
+          pip install --upgrade pip
           pip install -r requirements.txt
           playwright install chromium
-          playwright install-deps
+          playwright install-deps chromium
       
-      - name: Run Auto Login
+      - name: 运行自动登录
         env:
           GH_USERNAME: ${{ secrets.GH_USERNAME }}
           GH_PASSWORD: ${{ secrets.GH_PASSWORD }}
           GH_SESSION: ${{ secrets.GH_SESSION }}
+          GITHUB_2FA_SECRET: ${{ secrets.GITHUB_2FA_SECRET }}
+          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          # 自定义等待时间
-          TWO_FACTOR_WAIT: ${{ github.event.inputs.wait_2fa || '60' }}
-          DEVICE_VERIFY_WAIT: '60'
-          REDIRECT_WAIT: '90'
-        run: python scripts/auto_login.py
+        run: |
+          python scripts/auto_login.py
       
-      - name: Upload Screenshots
-        if: always()
+      - name: 上传截图（失败时）
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: screenshots-${{ github.run_number }}
-          path: "*.png"
+          path: '*.png'
           retention-days: 7
+      
+      - name: 上传截图（调试模式）
+        if: github.event.inputs.debug == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots-${{ github.run_number }}
+          path: '*.png'
+          retention-days: 3
