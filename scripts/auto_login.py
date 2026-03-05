@@ -701,7 +701,7 @@ class AutoLogin:
                 self.log(f"步骤 {self.step_count}: 验证登录状态", "STEP")
                 self.log(f"{'='*50}", "STEP")
                 
-                                final_url = page.url
+                final_url = page.url
                 if 'claw.cloud' not in final_url or 'signin' in final_url.lower():
                     self.log(f"登录验证失败: {final_url}", "ERROR")
                     self.send_final_notification(False, "登录验证失败")
