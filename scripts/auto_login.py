@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ClawCloud 自动登录脚本 v2.1
-- 支持自动2FA验证（TOTP）
+ClawCloud 自动登录脚本 v2.2
+- 支持自动2FA验证（TOTP）- 改进版
 - 支持设备验证等待
 - 自动更新 GitHub Secret
 - Telegram 通知
@@ -233,7 +233,7 @@ class AutoLogin:
 ⚠️ 此消息包含敏感信息，请在更新后删除""")
     
     def auto_fill_2fa(self, page):
-        """自动填写2FA验证码"""
+        """自动填写2FA验证码（改进版）"""
         if not self.totp_secret:
             return False
         
@@ -241,67 +241,177 @@ class AutoLogin:
             self.log("尝试自动2FA验证...", "INFO")
             
             # 生成TOTP代码
+            import time as time_module
             totp = pyotp.TOTP(self.totp_secret)
-            code = totp.now()
-            self.log(f"生成验证码: {code}", "INFO")
+            
+            # 获取当前时间戳
+            current_time = time_module.time()
+            
+            # 生成当前验证码
+            current_code = totp.at(current_time)
+            self.log(f"当前验证码: {current_code}", "INFO")
+            
+            # 计算当前周期剩余时间
+            time_remaining = 30 - (int(current_time) % 30)
+            self.log(f"当前周期剩余: {time_remaining}秒", "INFO")
+            
+            # 如果剩余时间太少，等待下一个周期
+            if time_remaining < 5:
+                self.log(f"等待新周期... ({time_remaining}秒)", "INFO")
+                time.sleep(time_remaining + 1)
+                current_code = totp.now()
+                current_time = time_module.time()
+                time_remaining = 30 - (int(current_time) % 30)
+                self.log(f"新周期验证码: {current_code} (剩余{time_remaining}秒)", "INFO")
             
             # 查找验证码输入框
             selectors = [
                 'input[name="app_otp"]',
                 'input[name="otp"]',
                 'input#app_totp',
-                'input[autocomplete="one-time-code"]'
+                'input[autocomplete="one-time-code"]',
+                'input[type="text"][inputmode="numeric"]'
             ]
             
+            otp_input = None
             for selector in selectors:
                 try:
-                    otp_input = page.locator(selector).first
-                    if otp_input.is_visible(timeout=3000):
-                        otp_input.fill(code)
-                        self.log("已填写验证码", "SUCCESS")
-                        self.shot(page, "2FA已填写")
-                        
-                        # 提交表单
-                        time.sleep(1)
-                        
-                        # 尝试多种提交方式
-                        try:
-                            # 方式1: 按Enter键
-                            page.keyboard.press('Enter')
-                        except:
-                            try:
-                                # 方式2: 点击提交按钮
-                                page.locator('button[type="submit"]').first.click()
-                            except:
-                                pass
-                        
-                        self.log("已提交2FA验证", "SUCCESS")
-                        
-                        # 等待跳转
-                        time.sleep(3)
-                        try:
-                            page.wait_for_load_state('networkidle', timeout=15000)
-                        except:
-                            pass
-                        
-                        # 检查是否成功
-                        current_url = page.url
-                        if 'two-factor' not in current_url:
-                            self.log("2FA自动验证成功！", "SUCCESS")
-                            self.tg.send("✅ <b>2FA自动验证成功</b>")
-                            return True
-                        else:
-                            self.log("验证码可能错误或已过期", "WARN")
-                            return False
-                            
-                except Exception as e:
+                    element = page.locator(selector).first
+                    if element.is_visible(timeout=3000):
+                        otp_input = element
+                        self.log(f"找到输入框: {selector}", "INFO")
+                        break
+                except:
                     continue
             
-            self.log("未找到验证码输入框", "WARN")
+            if not otp_input:
+                self.log("未找到验证码输入框", "WARN")
+                return False
+            
+            # 清空输入框
+            try:
+                otp_input.clear()
+            except:
+                pass
+            
+            # 填写验证码
+            otp_input.fill(current_code)
+            self.log("已填写验证码", "SUCCESS")
+            time.sleep(0.5)
+            self.shot(page, "2FA已填写")
+            
+            # 提交表单（尝试多种方式）
+            submitted = False
+            
+            # 方式1: 按 Enter
+            try:
+                otp_input.press('Enter')
+                submitted = True
+                self.log("已提交（Enter键）", "SUCCESS")
+            except:
+                pass
+            
+            # 方式2: 点击提交按钮
+            if not submitted:
+                try:
+                    submit_selectors = [
+                        'button[type="submit"]',
+                        'button:has-text("Verify")',
+                        'input[type="submit"]'
+                    ]
+                    for selector in submit_selectors:
+                        try:
+                            btn = page.locator(selector).first
+                            if btn.is_visible(timeout=2000):
+                                btn.click()
+                                submitted = True
+                                self.log("已提交（点击按钮）", "SUCCESS")
+                                break
+                        except:
+                            continue
+                except:
+                    pass
+            
+            if not submitted:
+                self.log("提交失败", "WARN")
+                return False
+            
+            # 等待页面响应
+            self.log("等待验证结果...", "INFO")
+            time.sleep(3)
+            
+            # 尝试等待网络空闲
+            try:
+                page.wait_for_load_state('networkidle', timeout=10000)
+            except:
+                pass
+            
+            time.sleep(2)
+            
+            # 检查是否成功
+            current_url = page.url
+            self.log(f"验证后 URL: {current_url}", "INFO")
+            
+            # 成功的标志：离开 two-factor 页面
+            if 'two-factor' not in current_url and 'sessions/two-factor' not in current_url:
+                self.log("2FA自动验证成功！", "SUCCESS")
+                self.shot(page, "2FA验证成功")
+                self.tg.send("✅ <b>2FA自动验证成功</b>")
+                return True
+            
+            # 检查是否有错误提示
+            try:
+                error_selectors = [
+                    '.flash-error',
+                    '.js-flash-alert',
+                    '[role="alert"]',
+                    '.error'
+                ]
+                for selector in error_selectors:
+                    try:
+                        error_elem = page.locator(selector).first
+                        if error_elem.is_visible(timeout=2000):
+                            error_text = error_elem.inner_text()
+                            self.log(f"错误提示: {error_text}", "ERROR")
+                            break
+                    except:
+                        continue
+            except:
+                pass
+            
+            # 如果还在 2FA 页面，尝试前一个周期的验证码
+            self.log("尝试前一个周期的验证码...", "INFO")
+            prev_code = totp.at(current_time - 30)
+            self.log(f"前一周期验证码: {prev_code}", "INFO")
+            
+            try:
+                otp_input.clear()
+                otp_input.fill(prev_code)
+                time.sleep(0.5)
+                otp_input.press('Enter')
+                time.sleep(5)
+                
+                try:
+                    page.wait_for_load_state('networkidle', timeout=10000)
+                except:
+                    pass
+                
+                current_url = page.url
+                if 'two-factor' not in current_url:
+                    self.log("2FA自动验证成功（前一周期）！", "SUCCESS")
+                    self.shot(page, "2FA验证成功_前周期")
+                    self.tg.send("✅ <b>2FA自动验证成功</b>")
+                    return True
+            except Exception as e:
+                self.log(f"前一周期验证失败: {e}", "WARN")
+            
+            self.log("验证码验证失败", "ERROR")
             return False
             
         except Exception as e:
             self.log(f"自动2FA异常: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
             return False
     
     def wait_for_verification(self, page, verify_type="device"):
@@ -338,7 +448,9 @@ class AutoLogin:
 2️⃣ 获取 6 位验证码
 3️⃣ 在页面中输入并提交
 
-等待时间: {wait_time} 秒"""
+等待时间: {wait_time} 秒
+
+💡 提示：请检查 GH_2FA_SECRET 是否正确"""
             else:
                 msg = f"""⚠️ <b>需要二次验证 (2FA)</b>
 
@@ -572,7 +684,7 @@ class AutoLogin:
         print("\n" + "="*60)
         print("🚀 ClawCloud 自动登录脚本")
         print("="*60)
-        print(f"版本: 2.1")
+        print(f"版本: 2.2")
         print(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
         
