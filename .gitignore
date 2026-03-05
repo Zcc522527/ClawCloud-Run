@@ -4,16 +4,22 @@ __pycache__/
 *$py.class
 *.so
 .Python
-venv/
 env/
+venv/
 ENV/
+build/
+dist/
+*.egg-info/
 
 # Playwright
-playwright-report/
-test-results/
+.playwright/
 
-# Screenshots
+# 截图
 *.png
+
+# 环境变量
+.env
+.env.local
 
 # IDE
 .vscode/
@@ -21,10 +27,9 @@ test-results/
 *.swp
 *.swo
 
-# Environment
-.env
-.env.local
-
-# OS
+# 系统文件
 .DS_Store
 Thumbs.db
+
+# 日志
+*.log
