@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-ClawCloud 自动登录脚本
+ClawCloud 自动登录脚本 v2.1
+- 支持自动2FA验证（TOTP）
 - 支持设备验证等待
-- 支持二次验证（2FA）等待
 - 自动更新 GitHub Secret
 - Telegram 通知
 """
@@ -12,6 +12,7 @@ import sys
 import time
 import base64
 import requests
+import pyotp
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 # ==================== 配置 ====================
@@ -131,6 +132,7 @@ class AutoLogin:
         self.username = os.environ.get('GH_USERNAME')
         self.password = os.environ.get('GH_PASSWORD')
         self.gh_session = os.environ.get('GH_SESSION', '').strip()
+        self.totp_secret = os.environ.get('GITHUB_2FA_SECRET', '').strip()
         self.tg = Telegram()
         self.secret = SecretUpdater()
         self.shots = []
@@ -214,6 +216,78 @@ class AutoLogin:
 
 ⚠️ 此消息包含敏感信息，请在更新后删除""")
     
+    def auto_fill_2fa(self, page):
+        """自动填写2FA验证码"""
+        if not self.totp_secret:
+            return False
+        
+        try:
+            self.log("尝试自动2FA验证...", "INFO")
+            
+            # 生成TOTP代码
+            totp = pyotp.TOTP(self.totp_secret)
+            code = totp.now()
+            self.log(f"生成验证码: {code}", "INFO")
+            
+            # 查找验证码输入框
+            selectors = [
+                'input[name="app_otp"]',
+                'input[name="otp"]',
+                'input#app_totp',
+                'input[autocomplete="one-time-code"]'
+            ]
+            
+            for selector in selectors:
+                try:
+                    otp_input = page.locator(selector).first
+                    if otp_input.is_visible(timeout=3000):
+                        otp_input.fill(code)
+                        self.log("已填写验证码", "SUCCESS")
+                        self.shot(page, "2FA已填写")
+                        
+                        # 提交表单
+                        time.sleep(1)
+                        
+                        # 尝试多种提交方式
+                        try:
+                            # 方式1: 按Enter键
+                            page.keyboard.press('Enter')
+                        except:
+                            try:
+                                # 方式2: 点击提交按钮
+                                page.locator('button[type="submit"]').first.click()
+                            except:
+                                pass
+                        
+                        self.log("已提交2FA验证", "SUCCESS")
+                        
+                        # 等待跳转
+                        time.sleep(3)
+                        try:
+                            page.wait_for_load_state('networkidle', timeout=15000)
+                        except:
+                            pass
+                        
+                        # 检查是否成功
+                        current_url = page.url
+                        if 'two-factor' not in current_url:
+                            self.log("2FA自动验证成功！", "SUCCESS")
+                            self.tg.send("✅ <b>2FA自动验证成功</b>")
+                            return True
+                        else:
+                            self.log("验证码可能错误或已过期", "WARN")
+                            return False
+                            
+                except Exception as e:
+                    continue
+            
+            self.log("未找到验证码输入框", "WARN")
+            return False
+            
+        except Exception as e:
+            self.log(f"自动2FA异常: {e}", "ERROR")
+            return False
+    
     def wait_for_verification(self, page, verify_type="device"):
         """统一的验证等待逻辑"""
         wait_time = DEVICE_VERIFY_WAIT if verify_type == "device" else TWO_FACTOR_WAIT
@@ -227,15 +301,37 @@ class AutoLogin:
 1️⃣ 检查邮箱并点击验证链接
 2️⃣ 或在 GitHub App 中批准设备
 3️⃣ 或访问 https://github.com/settings/security"""
+            
         else:
+            # 2FA处理
             title = "二次验证 (2FA)"
             check_patterns = ['two-factor', 'sessions/two-factor']
-            msg = f"""⚠️ <b>需要二次验证 (2FA)</b>
+            
+            # 如果有TOTP密钥，尝试自动填写
+            if self.totp_secret:
+                if self.auto_fill_2fa(page):
+                    return True
+                self.log("自动2FA失败，切换到等待模式...", "WARN")
+            
+            # 构建等待消息
+            if self.totp_secret:
+                msg = f"""⚠️ <b>2FA自动验证失败</b>
+
+自动验证未成功，请手动完成：
+1️⃣ 打开验证器 App
+2️⃣ 获取 6 位验证码
+3️⃣ 在页面中输入并提交
+
+等待时间: {wait_time} 秒"""
+            else:
+                msg = f"""⚠️ <b>需要二次验证 (2FA)</b>
 
 请在 {wait_time} 秒内完成：
 1️⃣ 打开验证器 App（如 Google Authenticator）
 2️⃣ 获取 6 位验证码
-3️⃣ 在页面中输入并提交"""
+3️⃣ 在页面中输入并提交
+
+💡 提示：可配置 GITHUB_2FA_SECRET 实现自动验证"""
         
         self.log(f"需要{title}，等待 {wait_time} 秒...", "WAIT")
         shot_file = self.shot(page, title)
@@ -268,7 +364,7 @@ class AutoLogin:
                     
                     # 尝试刷新页面状态
                     if i % 10 == 0 and i > 0:
-                        page.evaluate("() => { }")  # 触发页面检查
+                        page.evaluate("() => { }")
                         
                 except Exception as e:
                     self.log(f"检查异常: {e}", "WARN")
@@ -434,7 +530,8 @@ class AutoLogin:
 <b>状态:</b> {status}
 <b>用户:</b> <code>{self.username}</code>
 <b>时间:</b> {time.strftime('%Y-%m-%d %H:%M:%S')}
-<b>截图:</b> {len(self.shots)} 张"""
+<b>截图:</b> {len(self.shots)} 张
+<b>2FA:</b> {'自动' if self.totp_secret else '手动'}"""
         
         if error_msg:
             msg += f"\n<b>错误:</b> {error_msg}"
@@ -449,10 +546,8 @@ class AutoLogin:
         # 发送关键截图
         if self.shots:
             if success:
-                # 成功时发送最后一张
                 self.tg.photo(self.shots[-1], "登录成功")
             else:
-                # 失败时发送最后 3 张
                 for shot in self.shots[-3:]:
                     self.tg.photo(shot, os.path.basename(shot))
     
@@ -461,7 +556,7 @@ class AutoLogin:
         print("\n" + "="*60)
         print("🚀 ClawCloud 自动登录脚本")
         print("="*60)
-        print(f"版本: 2.0")
+        print(f"版本: 2.1")
         print(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
         
@@ -469,6 +564,7 @@ class AutoLogin:
         self.log(f"用户名: {self.username}")
         self.log(f"密码: {'●' * 8 if self.password else '未设置'}")
         self.log(f"Session Cookie: {'已设置' if self.gh_session else '未设置'}")
+        self.log(f"2FA密钥: {'已配置 (自动模式)' if self.totp_secret else '未配置 (手动模式)'}")
         self.log(f"设备验证等待: {DEVICE_VERIFY_WAIT}秒")
         self.log(f"2FA 等待: {TWO_FACTOR_WAIT}秒")
         self.log(f"重定向等待: {REDIRECT_WAIT}秒")
@@ -578,12 +674,10 @@ class AutoLogin:
                 self.log(f"当前 URL: {url}")
                 
                 if 'github.com/login' in url or 'github.com/session' in url:
-                    # 需要登录
                     if not self.login_github(page, context):
                         self.send_final_notification(False, "GitHub 登录失败")
                         sys.exit(1)
                 elif 'github.com/login/oauth/authorize' in url:
-                    # Cookie 有效，直接授权
                     self.log("Session Cookie 有效", "SUCCESS")
                     self.handle_oauth(page)
                 else:
@@ -607,7 +701,7 @@ class AutoLogin:
                 self.log(f"步骤 {self.step_count}: 验证登录状态", "STEP")
                 self.log(f"{'='*50}", "STEP")
                 
-                final_url = page.url
+                                final_url = page.url
                 if 'claw.cloud' not in final_url or 'signin' in final_url.lower():
                     self.log(f"登录验证失败: {final_url}", "ERROR")
                     self.send_final_notification(False, "登录验证失败")
@@ -659,13 +753,6 @@ class AutoLogin:
                 
             finally:
                 browser.close()
-                
-                # 清理截图（可选）
-                # for shot in self.shots:
-                #     try:
-                #         os.remove(shot)
-                #     except:
-                #         pass
 
 
 if __name__ == "__main__":
