@@ -20,7 +20,7 @@ env:
 
 jobs:
   login:
-    runs-on: ubuntu-22.04  # 改用 Ubuntu 22.04 避免依赖问题
+    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04
     
     steps:
       - name: 检出代码
@@ -67,7 +67,7 @@ jobs:
           GH_USERNAME: ${{ secrets.GH_USERNAME }}
           GH_PASSWORD: ${{ secrets.GH_PASSWORD }}
           GH_SESSION: ${{ secrets.GH_SESSION }}
-          GITHUB_2FA_SECRET: ${{ secrets.GITHUB_2FA_SECRET }}
+          GH_2FA_SECRET: ${{ secrets.GH_2FA_SECRET }}
           REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
