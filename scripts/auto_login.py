@@ -43,27 +43,36 @@ class Telegram:
         if not self.ok:
             return
         try:
-            requests.post(
+            response = requests.post(
                 f"https://api.telegram.org/bot{self.token}/sendMessage",
                 data={"chat_id": self.chat_id, "text": msg, "parse_mode": "HTML"},
                 timeout=30
             )
+            if response.status_code != 200:
+                print(f"⚠️ Telegram 发送失败: {response.status_code} - {response.text}")
+            else:
+                print(f"✅ Telegram 消息已发送")
         except Exception as e:
-            print(f"⚠️ Telegram 发送失败: {e}")
+            print(f"⚠️ Telegram 发送异常: {e}")
     
     def photo(self, path, caption=""):
         if not self.ok or not os.path.exists(path):
+            print(f"⚠️ 无法发送图片: ok={self.ok}, exists={os.path.exists(path) if path else False}")
             return
         try:
             with open(path, 'rb') as f:
-                requests.post(
+                response = requests.post(
                     f"https://api.telegram.org/bot{self.token}/sendPhoto",
                     data={"chat_id": self.chat_id, "caption": caption[:1024]},
                     files={"photo": f},
                     timeout=60
                 )
+                if response.status_code != 200:
+                    print(f"⚠️ Telegram 图片发送失败: {response.status_code} - {response.text}")
+                else:
+                    print(f"✅ Telegram 图片已发送: {path}")
         except Exception as e:
-            print(f"⚠️ Telegram 图片发送失败: {e}")
+            print(f"⚠️ Telegram 图片发送异常: {e}")
 
 
 class SecretUpdater:
@@ -132,13 +141,14 @@ class AutoLogin:
         self.username = os.environ.get('GH_USERNAME')
         self.password = os.environ.get('GH_PASSWORD')
         self.gh_session = os.environ.get('GH_SESSION', '').strip()
+        
         # 支持多个可能的 2FA 密钥环境变量名
         self.totp_secret = (
-    os.environ.get('GH_2FA_SECRET', '') or 
-    os.environ.get('TOTP_SECRET', '') or 
-    os.environ.get('GITHUB_2FA_SECRET', '')
-    ).strip()
-
+            os.environ.get('GH_2FA_SECRET', '') or 
+            os.environ.get('TOTP_SECRET', '') or 
+            os.environ.get('GITHUB_2FA_SECRET', '')
+        ).strip()
+        
         self.tg = Telegram()
         self.secret = SecretUpdater()
         self.shots = []
@@ -337,7 +347,7 @@ class AutoLogin:
 2️⃣ 获取 6 位验证码
 3️⃣ 在页面中输入并提交
 
-💡 提示：可配置 GITHUB_2FA_SECRET 实现自动验证"""
+💡 提示：可配置 GH_2FA_SECRET 实现自动验证"""
         
         self.log(f"需要{title}，等待 {wait_time} 秒...", "WAIT")
         shot_file = self.shot(page, title)
